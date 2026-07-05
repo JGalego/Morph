@@ -221,7 +221,10 @@ impl morph_core::traits::Renderer for MarkdownRenderer {
     }
 
     fn supports(&self, kind: ContentKind) -> bool {
-        kind == ContentKind::Markdown
+        // Plain prose is just a document with no block-level structure —
+        // `parse_blocks` already degrades any unrecognized line to a
+        // paragraph, so no separate code path is needed for it.
+        matches!(kind, ContentKind::Markdown | ContentKind::PlainText)
     }
 
     fn render(&self, content: &DetectedContent, opts: &RenderOptions) -> Result<RenderedAsset> {
@@ -478,9 +481,10 @@ fn main() {
     }
 
     #[test]
-    fn supports_only_markdown_kind() {
+    fn supports_markdown_and_plain_text() {
         let renderer = MarkdownRenderer::new();
         assert!(renderer.supports(ContentKind::Markdown));
-        assert!(!renderer.supports(ContentKind::PlainText));
+        assert!(renderer.supports(ContentKind::PlainText));
+        assert!(!renderer.supports(ContentKind::Json));
     }
 }

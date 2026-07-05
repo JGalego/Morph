@@ -21,7 +21,7 @@ use morph_core::request::{CanonicalRequest, ResponseEvent, StopReason, Usage};
 use morph_core::stream::ResponseStream;
 use morph_core::traits::ProviderAdapter;
 
-use crate::util::send_request;
+use crate::util::{passthrough_headers, send_request};
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// Anthropic requires `max_tokens` on every request; this is the fallback
@@ -36,10 +36,20 @@ const DEFAULT_MAX_TOKENS: u32 = 4096;
 /// `x-api-key` header rather than `Authorization: Bearer`, matching
 /// Anthropic's actual API; the header is omitted entirely when `api_key` is
 /// `None`, for compatibility with proxies that inject their own auth.
+///
+/// When `passthrough_auth` is set, `api_key` is ignored entirely and every
+/// header from the client's original request to Morph (minus a small
+/// deny-list of hop-by-hop/body-describing ones — see
+/// `util::passthrough_headers`) is replayed verbatim on the upstream call
+/// instead. This is what makes an OAuth-backed claude.ai subscription login
+/// work through Morph with no Anthropic API key configured at all: Morph
+/// doesn't need to understand *which* header carries the credential, it
+/// just forwards whatever the client already sent.
 pub struct AnthropicProvider {
     name: String,
     base_url: String,
     api_key: Option<String>,
+    passthrough_auth: bool,
     client: reqwest::Client,
 }
 
@@ -48,11 +58,13 @@ impl AnthropicProvider {
         name: impl Into<String>,
         base_url: impl Into<String>,
         api_key: Option<String>,
+        passthrough_auth: bool,
     ) -> Self {
         AnthropicProvider {
             name: name.into(),
             base_url: base_url.into(),
             api_key,
+            passthrough_auth,
             client: reqwest::Client::new(),
         }
     }
@@ -81,17 +93,32 @@ impl ProviderAdapter for AnthropicProvider {
         }
     }
 
-    async fn send(&self, req: CanonicalRequest) -> Result<ResponseStream, GatewayError> {
+    async fn send(
+        &self,
+        req: CanonicalRequest,
+        incoming_headers: &[(String, String)],
+    ) -> Result<ResponseStream, GatewayError> {
         let body = build_request_body(&req);
         let url = format!("{}/messages", self.base_url.trim_end_matches('/'));
 
-        let mut builder = self
-            .client
-            .post(url)
-            .header("anthropic-version", ANTHROPIC_VERSION)
-            .json(&body);
-        if let Some(key) = &self.api_key {
-            builder = builder.header("x-api-key", key);
+        let mut builder = self.client.post(url).json(&body);
+        if self.passthrough_auth {
+            for (name, value) in passthrough_headers(incoming_headers) {
+                builder = builder.header(name, value);
+            }
+            // Only fill in a default if the client didn't already send its
+            // own (real Anthropic clients, including Claude Code, always do).
+            if !incoming_headers
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("anthropic-version"))
+            {
+                builder = builder.header("anthropic-version", ANTHROPIC_VERSION);
+            }
+        } else {
+            builder = builder.header("anthropic-version", ANTHROPIC_VERSION);
+            if let Some(key) = &self.api_key {
+                builder = builder.header("x-api-key", key);
+            }
         }
 
         let response = send_request(builder).await?;
@@ -504,6 +531,37 @@ mod tests {
     }
 
     #[test]
+    fn folds_inline_system_role_messages_and_never_emits_them_as_messages() {
+        let mut req = base_request(
+            "claude-3-5-sonnet",
+            vec![
+                Message {
+                    role: Role::System,
+                    content: vec![ContentBlock::text("Reminder: stay in character.")],
+                    name: None,
+                },
+                Message::user("hi"),
+            ],
+        );
+        req.system = Some("Be terse.".to_string());
+
+        let body = build_request_body(&req);
+
+        // The top-level system field and the inline system-role message are
+        // combined, in encounter order, top-level first.
+        assert_eq!(
+            body["system"],
+            json!("Be terse.\n\nReminder: stay in character.")
+        );
+        // Only the user turn ends up in `messages` — a `role: "system"`
+        // entry there is rejected outright by Anthropic's real API.
+        assert_eq!(
+            body["messages"],
+            json!([{"role": "user", "content": [{"type": "text", "text": "hi"}]}])
+        );
+    }
+
+    #[test]
     fn maps_tool_use_and_tool_result_blocks_inline() {
         let assistant_msg = Message {
             role: Role::Assistant,
@@ -601,12 +659,13 @@ mod tests {
             "anthropic",
             mock_server.uri(),
             Some("sk-ant-test".to_string()),
+            false,
         );
         let req = base_request(
             "claude-3-5-sonnet",
             vec![Message::user("what's the weather?")],
         );
-        let mut stream = provider.send(req).await.expect("send should succeed");
+        let mut stream = provider.send(req, &[]).await.expect("send should succeed");
 
         let mut events = Vec::new();
         while let Some(event) = stream.next().await {
@@ -683,9 +742,10 @@ mod tests {
             "anthropic",
             mock_server.uri(),
             Some("sk-ant-test".to_string()),
+            false,
         );
         let req = base_request("claude-3-5-sonnet", vec![Message::user("hi")]);
-        let err = provider.send(req).await.err().expect("should fail");
+        let err = provider.send(req, &[]).await.err().expect("should fail");
 
         match err {
             GatewayError::Upstream { status, message } => {
@@ -694,5 +754,58 @@ mod tests {
             }
             other => panic!("expected Upstream error, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn passthrough_auth_forwards_clients_own_headers_and_ignores_configured_key() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/messages"))
+            // These exact-match assertions are the whole test: if
+            // passthrough_auth forwarded the wrong thing (or the configured
+            // `api_key` leaked through instead), wiremock has no matching
+            // mock, the mock server 404s, and `send()` below fails.
+            .and(header("anthropic-beta", "oauth-2026-01-01"))
+            .and(header("authorization", "Bearer client-oauth-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                concat!(
+                    "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-3-5-sonnet\",\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n",
+                    "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+                ),
+                "text/event-stream",
+            ))
+            .mount(&mock_server)
+            .await;
+
+        // Configured with an api_key that must be ignored, and
+        // passthrough_auth = true.
+        let provider = AnthropicProvider::new(
+            "anthropic",
+            mock_server.uri(),
+            Some("configured-key-must-not-be-sent".to_string()),
+            true,
+        );
+        let req = base_request("claude-3-5-sonnet", vec![Message::user("hi")]);
+        let incoming_headers = vec![
+            (
+                "authorization".to_string(),
+                "Bearer client-oauth-token".to_string(),
+            ),
+            ("anthropic-beta".to_string(), "oauth-2026-01-01".to_string()),
+            // Must be dropped, not forwarded (would desync from the new body).
+            ("content-length".to_string(), "9999".to_string()),
+        ];
+
+        let mut stream = provider.send(req, &incoming_headers).await.expect(
+            "send should succeed — wiremock only matches if headers were forwarded correctly",
+        );
+        let mut events = Vec::new();
+        while let Some(event) = stream.next().await {
+            events.push(event.expect("event should not be an error"));
+        }
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::MessageStop { .. })));
     }
 }

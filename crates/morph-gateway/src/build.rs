@@ -15,6 +15,7 @@ use morph_providers::{AnthropicProvider, OpenAiProvider};
 use tokio::sync::watch;
 
 use crate::classifier::CompositeClassifier;
+use crate::inspector::InspectorHub;
 use crate::state::AppState;
 
 /// Assembles an `AppState` from a `Config`. Called once at startup and
@@ -41,11 +42,13 @@ pub fn build_app_state(
                 name.clone(),
                 provider_cfg.base_url.clone(),
                 api_key,
+                provider_cfg.passthrough_auth,
             )),
             "anthropic" => Arc::new(AnthropicProvider::new(
                 name.clone(),
                 provider_cfg.base_url.clone(),
                 api_key,
+                provider_cfg.passthrough_auth,
             )),
             other => {
                 anyhow::bail!(
@@ -106,6 +109,11 @@ pub fn build_app_state(
         None
     };
 
+    let inspector = config
+        .inspector
+        .enabled
+        .then(|| Arc::new(InspectorHub::new(config.inspector.max_events)));
+
     Ok(AppState {
         config: config_rx,
         protocols,
@@ -122,5 +130,6 @@ pub fn build_app_state(
         plugin_infos,
         rate_limiter,
         started_at: Instant::now(),
+        inspector,
     })
 }

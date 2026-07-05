@@ -20,7 +20,8 @@ pub struct Config {
     #[serde(default = "default_listen")]
     pub listen: String,
 
-    /// "auto" | "force_text" | "force_hybrid" — see `morph_core::PlannerMode`.
+    /// "auto" | "force_text" | "force_hybrid" | "force_image_only" — see
+    /// `morph_core::PlannerMode`.
     #[serde(default = "default_mode")]
     pub mode: String,
 
@@ -57,6 +58,9 @@ pub struct Config {
 
     #[serde(default)]
     pub logging: LoggingConfig,
+
+    #[serde(default)]
+    pub inspector: InspectorConfig,
 }
 
 fn default_mode() -> String {
@@ -82,6 +86,7 @@ impl Default for Config {
                 api_key: None,
                 api_key_env: Some("OPENAI_API_KEY".to_string()),
                 default_model: None,
+                passthrough_auth: false,
             },
         );
 
@@ -99,6 +104,7 @@ impl Default for Config {
             render: RenderConfig::default(),
             plugins: PluginsConfig::default(),
             logging: LoggingConfig::default(),
+            inspector: InspectorConfig::default(),
         }
     }
 }
@@ -117,6 +123,15 @@ pub struct ProviderConfig {
     pub api_key_env: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
+    /// When set, `api_key`/`api_key_env` are ignored and every header from
+    /// the client's original request to Morph is forwarded verbatim on the
+    /// upstream call instead — Morph never needs its own credential. This
+    /// is what lets an OAuth-backed subscription login (e.g. Claude Code
+    /// signed in via claude.ai, not an API key) work through Morph: Morph
+    /// doesn't need to know which header carries the credential, it just
+    /// replays whatever the client already sent.
+    #[serde(default)]
+    pub passthrough_auth: bool,
 }
 
 impl ProviderConfig {
@@ -199,6 +214,28 @@ impl Default for LoggingConfig {
         LoggingConfig {
             log_prompts: false,
             json: true,
+        }
+    }
+}
+
+/// The live "what did Morph get, what did it send" web dashboard, served at
+/// `/_inspector` on the main gateway port. Off by default: this holds full
+/// prompt/response content in memory — including any rendered images — so
+/// enabling it on an instance reachable by anyone other than you is a real
+/// exposure, not just a debug convenience. See docs/ARCHITECTURE.md.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InspectorConfig {
+    pub enabled: bool,
+    /// How many recent exchanges to keep in memory (oldest dropped first).
+    pub max_events: usize,
+}
+
+impl Default for InspectorConfig {
+    fn default() -> Self {
+        InspectorConfig {
+            enabled: false,
+            max_events: 50,
         }
     }
 }

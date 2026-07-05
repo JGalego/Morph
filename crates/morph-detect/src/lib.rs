@@ -18,6 +18,7 @@ pub mod table;
 
 use morph_core::capabilities::Capabilities;
 use morph_core::content::{ContentKind, ContentMetrics, DetectedContent, RequestAnalysis};
+use morph_core::message::Role;
 use morph_core::representation::{
     PlannerConfig, PlannerMode, RasterFormat, Representation, RepresentationPlan, SegmentPlan,
 };
@@ -107,6 +108,16 @@ pub fn analyze(req: &CanonicalRequest, classifier: &dyn Classifier) -> RequestAn
     let mut segments = Vec::with_capacity(req.messages.len());
 
     for (message_index, message) in req.messages.iter().enumerate() {
+        // System-role turns (the initial prompt, or reminders/context a
+        // client like Claude Code injects mid-conversation) are structural,
+        // not "the prompt" a representation mode like `force_image_only` is
+        // about — rendering one as a lossy image risks breaking whatever
+        // the client actually depends on it saying verbatim. These always
+        // stay text, regardless of `PlannerMode`.
+        if message.role == Role::System {
+            continue;
+        }
+
         let text = message.text_content();
         if text.trim().is_empty() {
             continue;
@@ -218,13 +229,16 @@ fn decide(
     }
 
     let force_hybrid = cfg.mode == PlannerMode::ForceHybrid;
+    let force_image_only = cfg.mode == PlannerMode::ForceImageOnly;
+    let force_any_image = force_hybrid || force_image_only;
     let format = RasterFormat::Png;
 
     // Rule c: below a minimum size, rendering overhead never pays for
-    // itself. Rule g carves out an explicit exception: ForceHybrid mode
-    // skips *only* this cutoff (and the size cutoffs in rules d/e below),
-    // while still respecting the exact-text/allow_code_as_image gating.
-    if !force_hybrid && segment.metrics.estimated_tokens < cfg.min_tokens_for_rendering {
+    // itself. Rule g carves out an explicit exception: ForceHybrid and
+    // ForceImageOnly skip *only* this cutoff (and the size cutoffs in
+    // rules d/e below), while still respecting the exact-text/
+    // allow_code_as_image gating.
+    if !force_any_image && segment.metrics.estimated_tokens < cfg.min_tokens_for_rendering {
         return (
             Representation::Text,
             "below rendering threshold".to_string(),
@@ -234,7 +248,9 @@ fn decide(
     match segment.kind {
         // Rule d (Code): text always stays; an image is only ever additive,
         // and only when the operator has explicitly opted in, since coding
-        // agents need exact, editable text.
+        // agents need exact, editable text. This holds even under
+        // ForceImageOnly — see `PlannerMode::ForceImageOnly`'s doc comment —
+        // code never goes above Hybrid.
         ContentKind::Code => {
             if cfg.allow_code_as_image {
                 (
@@ -251,11 +267,14 @@ fn decide(
 
         // Rule d (the other requires_exact_text() kinds): text always
         // stays; a Hybrid image is added when the content is large/nested
-        // enough that a picture plausibly helps. ApiSpec is excluded here
-        // even though `ContentKind::requires_exact_text()` covers it,
-        // because rule f explicitly calls it out as always-Text (no
-        // detector in this crate ever produces it, and image rendering for
-        // API specs is out of scope for v1 regardless).
+        // enough that a picture plausibly helps, or unconditionally under
+        // ForceHybrid/ForceImageOnly (both cap out at Hybrid here, never
+        // ImageOnly — see `PlannerMode::ForceImageOnly`'s doc comment).
+        // ApiSpec is excluded here even though
+        // `ContentKind::requires_exact_text()` covers it, because rule f
+        // explicitly calls it out as always-Text (no detector in this
+        // crate ever produces it, and image rendering for API specs is out
+        // of scope for v1 regardless).
         ContentKind::Json
         | ContentKind::Yaml
         | ContentKind::Xml
@@ -269,10 +288,10 @@ fn decide(
                     "structured content large/nested enough for a supplementary image (rule d)"
                         .to_string(),
                 )
-            } else if force_hybrid {
+            } else if force_any_image {
                 (
                     Representation::Hybrid { format },
-                    "forced hybrid by config; below the normal size threshold (rule g)".to_string(),
+                    "forced image mode by config; below the normal size threshold, capped at Hybrid for exact-text content (rule g)".to_string(),
                 )
             } else {
                 (
@@ -285,11 +304,18 @@ fn decide(
 
         // Rule e: tables and console-ish output get a supplementary image
         // once they're big enough (or, for logs, colorized) that a picture
-        // is more scannable than a wall of text.
+        // is more scannable than a wall of text — and, under
+        // ForceImageOnly specifically, the image *replaces* the text
+        // outright, since none of these kinds require exact-text fidelity.
         ContentKind::Table => {
             let naturally_large =
                 segment.metrics.column_count > 6 || segment.metrics.row_count > 15;
-            if naturally_large {
+            if force_image_only {
+                (
+                    Representation::ImageOnly { format },
+                    "forced image-only by config (rule h)".to_string(),
+                )
+            } else if naturally_large {
                 (
                     Representation::Hybrid { format },
                     "table large enough to benefit from a rendered image (rule e)".to_string(),
@@ -309,7 +335,12 @@ fn decide(
         }
         ContentKind::TerminalLog | ContentKind::StackTrace | ContentKind::ShellSession => {
             let naturally_large = segment.metrics.has_ansi_codes || segment.metrics.line_count > 30;
-            if naturally_large {
+            if force_image_only {
+                (
+                    Representation::ImageOnly { format },
+                    "forced image-only by config (rule h)".to_string(),
+                )
+            } else if naturally_large {
                 (
                     Representation::Hybrid { format },
                     "log/trace content is ANSI-colored or long enough to benefit from an image (rule e)".to_string(),
@@ -329,22 +360,38 @@ fn decide(
             }
         }
 
-        // Rule f: prose and anything v1 has no image treatment for at all
-        // (diagrams, math, API specs, plain CSV, and any future kind not
-        // explicitly handled above) always stays text — including under
-        // ForceHybrid, since rule g only ever prefers Hybrid "wherever the
-        // content kind allows an image at all", and these kinds don't.
-        _ => (
-            Representation::Text,
-            "content kind has no image representation in v1 (rule f)".to_string(),
-        ),
+        // Rule f/h: prose, Markdown, and anything v1 has no *dedicated*
+        // image treatment for (diagrams, math, API specs, plain CSV, and
+        // any future kind not explicitly handled above) stays text under
+        // Auto/ForceHybrid — rule g only ever prefers Hybrid "wherever the
+        // content kind allows an image at all", and these kinds don't have
+        // a Hybrid path. Under ForceImageOnly, though, this is exactly the
+        // "safe to fully replace" bucket: none of these kinds require
+        // exact-text fidelity, so the image replaces the text outright.
+        // Kinds with no renderer registered (Math/Mermaid/Uml/Html/ApiSpec)
+        // degrade gracefully back to text downstream in
+        // `morph-gateway`'s representation stage, which only touches a
+        // message's content if rendering actually succeeded.
+        _ => {
+            if force_image_only {
+                (
+                    Representation::ImageOnly { format },
+                    "forced image-only by config (rule h)".to_string(),
+                )
+            } else {
+                (
+                    Representation::Text,
+                    "content kind has no image representation in v1 (rule f)".to_string(),
+                )
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use morph_core::message::Message;
+    use morph_core::message::{ContentBlock, Message};
     use morph_core::request::RequestMetadata;
     use std::time::SystemTime;
 
@@ -444,6 +491,30 @@ mod tests {
         assert_eq!(analysis.segments[1].kind, ContentKind::Json);
         assert!(analysis.segments[1].metrics.structural_depth >= 2);
         assert_eq!(analysis.segments[2].kind, ContentKind::Sql);
+    }
+
+    #[test]
+    fn analyze_skips_system_role_messages_but_preserves_later_indices() {
+        let classifier = DefaultClassifier::new();
+        let req = request(vec![
+            Message {
+                role: Role::System,
+                content: vec![ContentBlock::text("{\"reminder\": \"stay terse\"}")],
+                name: None,
+            },
+            Message::user("hello there"),
+        ]);
+
+        let analysis = analyze(&req, &classifier);
+
+        // The system-role message never becomes a segment at all — even
+        // though its content is JSON-shaped and would otherwise easily
+        // clear the classifier's confidence bar.
+        assert_eq!(analysis.segments.len(), 1);
+        assert_eq!(analysis.segments[0].kind, ContentKind::PlainText);
+        // Its `message_index` still correctly points at index 1, not 0 —
+        // skipping the system message must not shift later indices.
+        assert_eq!(analysis.segments[0].message_index, Some(1));
     }
 
     #[test]
@@ -755,6 +826,137 @@ mod tests {
         let plan = planner.plan(&analysis, &vision_caps(), &cfg);
 
         assert_eq!(plan.decisions[0].representation, Representation::Text);
+    }
+
+    #[test]
+    fn rule_h_force_image_only_replaces_prose_with_an_image() {
+        let planner = DefaultPlanner::new();
+        // Small enough that the normal size threshold would keep this text.
+        let metrics = ContentMetrics {
+            estimated_tokens: 5,
+            line_count: 3,
+            ..ContentMetrics::default()
+        };
+        let analysis = RequestAnalysis {
+            segments: vec![segment(ContentKind::PlainText, metrics)],
+        };
+        let cfg = PlannerConfig {
+            mode: PlannerMode::ForceImageOnly,
+            ..PlannerConfig::default()
+        };
+
+        let plan = planner.plan(&analysis, &vision_caps(), &cfg);
+
+        assert_eq!(
+            plan.decisions[0].representation,
+            Representation::ImageOnly {
+                format: RasterFormat::Png
+            }
+        );
+    }
+
+    #[test]
+    fn rule_h_force_image_only_replaces_table_and_log_content() {
+        let planner = DefaultPlanner::new();
+        let small = ContentMetrics {
+            estimated_tokens: 5,
+            ..ContentMetrics::default()
+        };
+        let analysis = RequestAnalysis {
+            segments: vec![
+                segment(ContentKind::Table, small.clone()),
+                segment(ContentKind::TerminalLog, small.clone()),
+                segment(ContentKind::ShellSession, small),
+            ],
+        };
+        let cfg = PlannerConfig {
+            mode: PlannerMode::ForceImageOnly,
+            ..PlannerConfig::default()
+        };
+
+        let plan = planner.plan(&analysis, &vision_caps(), &cfg);
+
+        for decision in &plan.decisions {
+            assert_eq!(
+                decision.representation,
+                Representation::ImageOnly {
+                    format: RasterFormat::Png
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn rule_h_force_image_only_never_exceeds_hybrid_for_exact_text_kinds() {
+        let planner = DefaultPlanner::new();
+        let small = ContentMetrics {
+            estimated_tokens: 5,
+            ..ContentMetrics::default()
+        };
+        let analysis = RequestAnalysis {
+            segments: vec![segment(ContentKind::Json, small)],
+        };
+        let cfg = PlannerConfig {
+            mode: PlannerMode::ForceImageOnly,
+            ..PlannerConfig::default()
+        };
+
+        let plan = planner.plan(&analysis, &vision_caps(), &cfg);
+
+        // Never ImageOnly — JSON must always keep its exact text.
+        assert_eq!(
+            plan.decisions[0].representation,
+            Representation::Hybrid {
+                format: RasterFormat::Png
+            }
+        );
+    }
+
+    #[test]
+    fn rule_h_force_image_only_still_respects_code_gating() {
+        let planner = DefaultPlanner::new();
+        let small = ContentMetrics {
+            estimated_tokens: 5,
+            ..ContentMetrics::default()
+        };
+        let analysis = RequestAnalysis {
+            segments: vec![segment(ContentKind::Code, small)],
+        };
+        let cfg = PlannerConfig {
+            mode: PlannerMode::ForceImageOnly,
+            allow_code_as_image: false,
+            ..PlannerConfig::default()
+        };
+
+        let plan = planner.plan(&analysis, &vision_caps(), &cfg);
+
+        assert_eq!(plan.decisions[0].representation, Representation::Text);
+    }
+
+    #[test]
+    fn rule_h_force_image_only_with_code_opt_in_stays_hybrid_not_image_only() {
+        let planner = DefaultPlanner::new();
+        let small = ContentMetrics {
+            estimated_tokens: 5,
+            ..ContentMetrics::default()
+        };
+        let analysis = RequestAnalysis {
+            segments: vec![segment(ContentKind::Code, small)],
+        };
+        let cfg = PlannerConfig {
+            mode: PlannerMode::ForceImageOnly,
+            allow_code_as_image: true,
+            ..PlannerConfig::default()
+        };
+
+        let plan = planner.plan(&analysis, &vision_caps(), &cfg);
+
+        assert_eq!(
+            plan.decisions[0].representation,
+            Representation::Hybrid {
+                format: RasterFormat::Png
+            }
+        );
     }
 
     #[test]

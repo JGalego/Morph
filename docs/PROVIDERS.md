@@ -52,6 +52,37 @@ base_url = "https://api.anthropic.com/v1"
 api_key_env = "ANTHROPIC_API_KEY"
 ```
 
+## Authenticating upstream: your own key, or `passthrough_auth`
+
+By default a provider uses `api_key`/`api_key_env` from `morph.toml` to
+authenticate every outbound call — Morph holds the credential, not the
+client.
+
+Set `passthrough_auth = true` instead to have Morph forward the client's
+*own* request headers (minus a small deny-list of hop-by-hop/body-describing
+ones — see `crates/morph-providers/src/util.rs::passthrough_headers`)
+verbatim on the upstream call, and ignore `api_key`/`api_key_env` entirely:
+
+```toml
+[providers.anthropic]
+kind = "anthropic"
+base_url = "https://api.anthropic.com/v1"
+passthrough_auth = true
+```
+
+This is what lets Claude Code authenticate through Morph using an
+OAuth-backed claude.ai subscription login instead of a separate Anthropic
+API key — Morph doesn't need to know which header carries the credential
+(it varies: `x-api-key` for a Console key, some combination involving
+`authorization`/`anthropic-beta` for a subscription login), it just replays
+whatever the client already sent. `morph -- claude` (see the README) uses
+this automatically when no Anthropic provider is otherwise configured.
+
+The trade-off: with `passthrough_auth`, Morph itself never validates or
+rate-limits by credential — whatever auth reaches Morph reaches the
+provider unchanged. Use `[auth]`/`[rate_limit]` in `morph.toml` if you need
+Morph itself to gate access.
+
 ## Adding a new provider
 
 1. Implement `ProviderAdapter` in a new module (or a new crate, if it has

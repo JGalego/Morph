@@ -91,6 +91,14 @@ pub enum PlannerMode {
     Auto,
     ForceText,
     ForceHybrid,
+    /// Replace text with a rendered image wherever that's safe — prose,
+    /// Markdown, tables, logs, stack traces. Content kinds where an LLM's
+    /// own vision transcription would be lossy for something that must
+    /// round-trip exactly (`ContentKind::requires_exact_text()`: JSON/YAML/
+    /// XML/SQL/config/code) are a deliberate exception: this mode still
+    /// only ever *adds* an image alongside that text, matching
+    /// `ForceHybrid` for those kinds specifically, and never drops it.
+    ForceImageOnly,
 }
 
 #[derive(Debug, Clone)]

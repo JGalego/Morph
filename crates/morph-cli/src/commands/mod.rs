@@ -1,6 +1,7 @@
 pub mod benchmark;
 pub mod config;
 pub mod doctor;
+pub mod exec;
 pub mod init;
 pub mod inspect;
 pub mod plugins;

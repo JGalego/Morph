@@ -28,7 +28,7 @@ pub async fn execute(config_path: &Path) -> anyhow::Result<()> {
         }
         Err(e) => {
             checks.push(Status::Fail(format!(
-                "config file {} failed to load: {e} (run `morph init` to create a fresh one)",
+                "config file {} failed to load: {e} (run 'morph init' to create a fresh one)",
                 config_path.display()
             )));
             for c in &checks {
@@ -46,7 +46,12 @@ pub async fn execute(config_path: &Path) -> anyhow::Result<()> {
     for (name, provider) in &config.providers {
         match provider.kind.as_str() {
             "openai" | "anthropic" => {
-                if provider.resolve_api_key().is_some() {
+                if provider.passthrough_auth {
+                    checks.push(Status::Ok(format!(
+                        "provider \"{name}\" ({}) uses passthrough_auth — forwards whatever credential the client sends, no key needed here",
+                        provider.kind
+                    )));
+                } else if provider.resolve_api_key().is_some() {
                     checks.push(Status::Ok(format!("provider \"{name}\" ({}) has an API key configured", provider.kind)));
                 } else {
                     checks.push(Status::Warn(format!(
@@ -91,6 +96,15 @@ pub async fn execute(config_path: &Path) -> anyhow::Result<()> {
         }
     } else {
         checks.push(Status::Ok("plugins disabled".to_string()));
+    }
+
+    if config.inspector.enabled {
+        checks.push(Status::Warn(format!(
+            "inspector enabled at /_inspector — holds full prompt/response content (max {} exchanges) in memory, don't expose this instance publicly",
+            config.inspector.max_events
+        )));
+    } else {
+        checks.push(Status::Ok("inspector disabled".to_string()));
     }
 
     for c in &checks {

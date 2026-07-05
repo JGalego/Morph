@@ -258,7 +258,10 @@ impl morph_core::traits::Renderer for LogRenderer {
     }
 
     fn supports(&self, kind: ContentKind) -> bool {
-        matches!(kind, ContentKind::TerminalLog | ContentKind::StackTrace)
+        matches!(
+            kind,
+            ContentKind::TerminalLog | ContentKind::StackTrace | ContentKind::ShellSession
+        )
     }
 
     fn render(&self, content: &DetectedContent, opts: &RenderOptions) -> Result<RenderedAsset> {
@@ -425,10 +428,11 @@ mod tests {
     }
 
     #[test]
-    fn supports_terminal_log_and_stack_trace() {
+    fn supports_terminal_log_stack_trace_and_shell_session() {
         let renderer = LogRenderer::new();
         assert!(renderer.supports(ContentKind::TerminalLog));
         assert!(renderer.supports(ContentKind::StackTrace));
+        assert!(renderer.supports(ContentKind::ShellSession));
         assert!(!renderer.supports(ContentKind::Code));
     }
 }

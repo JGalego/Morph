@@ -10,6 +10,7 @@ pub mod watch;
 pub use error::{ConfigError, Result};
 pub use load::{load, parse, write_default};
 pub use schema::{
-    AuthConfig, Config, LoggingConfig, PluginsConfig, ProviderConfig, RateLimitConfig, RenderConfig,
+    AuthConfig, Config, InspectorConfig, LoggingConfig, PluginsConfig, ProviderConfig,
+    RateLimitConfig, RenderConfig,
 };
 pub use watch::ConfigWatcher;

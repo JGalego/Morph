@@ -25,7 +25,9 @@ pub fn execute(config_path: &Path) -> anyhow::Result<()> {
         } else {
             ""
         };
-        let key_status = if provider.resolve_api_key().is_some() {
+        let key_status = if provider.passthrough_auth {
+            "passthrough auth"
+        } else if provider.resolve_api_key().is_some() {
             "key set"
         } else {
             "no key"

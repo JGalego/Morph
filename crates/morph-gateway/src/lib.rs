@@ -15,8 +15,9 @@
 mod auth;
 mod build;
 mod classifier;
+pub mod inspector;
 mod pipeline;
-mod representation;
+pub mod representation;
 mod routes;
 mod state;
 
@@ -46,6 +47,9 @@ pub fn router(
         .route("/v1/models", get(routes::list_models))
         .route("/health", get(routes::health))
         .route("/metrics", get(routes::metrics))
+        .route("/_inspector", get(routes::inspector_page))
+        .route("/_inspector/api/events", get(routes::inspector_events))
+        .route("/_inspector/api/stream", get(routes::inspector_stream))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::rate_limit,
@@ -63,9 +67,27 @@ pub fn router(
 /// Loads `config_path`, assembles the pipeline, and serves until the
 /// process receives a shutdown signal (Ctrl-C or SIGTERM). Installs the
 /// process-global Prometheus recorder — call this at most once per process.
+/// The config file is watched for hot-reload for as long as the server runs.
 pub async fn serve(config_path: &Path) -> anyhow::Result<()> {
     let watcher = morph_config::ConfigWatcher::spawn(config_path)?;
     let config = watcher.current();
+    run_server(config, watcher.receiver()).await
+}
+
+/// Like `serve`, but takes an already-assembled, in-memory `Config` instead
+/// of a file path — no file watching, since there's no file backing it.
+/// Used by `morph claude` (and any other command that needs to spin up a
+/// one-off gateway instance around a config it built programmatically
+/// rather than one the user wrote to disk).
+pub async fn serve_with_config(config: morph_config::Config) -> anyhow::Result<()> {
+    let (_tx, rx) = tokio::sync::watch::channel(config.clone());
+    run_server(config, rx).await
+}
+
+async fn run_server(
+    config: morph_config::Config,
+    config_rx: tokio::sync::watch::Receiver<morph_config::Config>,
+) -> anyhow::Result<()> {
     let listen = config.listen.clone();
 
     let recorder = PrometheusBuilder::new().build_recorder();
@@ -73,7 +95,7 @@ pub async fn serve(config_path: &Path) -> anyhow::Result<()> {
     metrics::set_global_recorder(recorder)
         .map_err(|e| anyhow::anyhow!("failed to install metrics recorder: {e}"))?;
 
-    let state = Arc::new(build_app_state(&config, watcher.receiver())?);
+    let state = Arc::new(build_app_state(&config, config_rx)?);
     let app = router(state, prometheus_handle);
 
     let listener = tokio::net::TcpListener::bind(&listen).await?;

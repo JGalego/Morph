@@ -12,6 +12,8 @@ use morph_middleware::{InMemoryStatsSink, ResponseCache};
 use morph_plugin_host::PluginRuntime;
 use tokio::sync::watch;
 
+use crate::inspector::InspectorHub;
+
 /// Everything a request handler needs, assembled once at startup (and
 /// re-assembled on config hot-reload) and shared behind an `Arc` across
 /// every axum handler.
@@ -39,6 +41,9 @@ pub struct AppState {
     pub plugin_infos: Vec<morph_plugin_abi::exports::morph::plugin::plugin::PluginInfo>,
     pub rate_limiter: Option<Arc<DefaultDirectRateLimiter>>,
     pub started_at: Instant,
+    /// `None` unless `[inspector] enabled = true` — see `inspector` module
+    /// docs for why that's the point at which capture overhead exists at all.
+    pub inspector: Option<Arc<InspectorHub>>,
 }
 
 impl AppState {

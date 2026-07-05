@@ -25,7 +25,7 @@ use morph_core::request::{CanonicalRequest, ResponseEvent, ResponseFormat, StopR
 use morph_core::stream::ResponseStream;
 use morph_core::traits::ProviderAdapter;
 
-use crate::util::send_request;
+use crate::util::{passthrough_headers, send_request};
 
 /// A `ProviderAdapter` speaking the OpenAI `/chat/completions` wire format.
 ///
@@ -35,10 +35,16 @@ use crate::util::send_request;
 /// all, which is required for backends (local Ollama, some vLLM deployments)
 /// that reject requests carrying an unexpected auth header just as readily
 /// as ones missing a required one.
+///
+/// When `passthrough_auth` is set, `api_key` is ignored and every header
+/// from the client's original request (minus a small deny-list — see
+/// `util::passthrough_headers`) is replayed verbatim on the upstream call
+/// instead, so Morph never needs its own credential for this backend.
 pub struct OpenAiProvider {
     name: String,
     base_url: String,
     api_key: Option<String>,
+    passthrough_auth: bool,
     client: reqwest::Client,
 }
 
@@ -47,11 +53,13 @@ impl OpenAiProvider {
         name: impl Into<String>,
         base_url: impl Into<String>,
         api_key: Option<String>,
+        passthrough_auth: bool,
     ) -> Self {
         OpenAiProvider {
             name: name.into(),
             base_url: base_url.into(),
             api_key,
+            passthrough_auth,
             client: reqwest::Client::new(),
         }
     }
@@ -79,12 +87,20 @@ impl ProviderAdapter for OpenAiProvider {
         }
     }
 
-    async fn send(&self, req: CanonicalRequest) -> Result<ResponseStream, GatewayError> {
+    async fn send(
+        &self,
+        req: CanonicalRequest,
+        incoming_headers: &[(String, String)],
+    ) -> Result<ResponseStream, GatewayError> {
         let body = build_request_body(&req);
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
 
         let mut builder = self.client.post(url).json(&body);
-        if let Some(key) = &self.api_key {
+        if self.passthrough_auth {
+            for (name, value) in passthrough_headers(incoming_headers) {
+                builder = builder.header(name, value);
+            }
+        } else if let Some(key) = &self.api_key {
             builder = builder.bearer_auth(key);
         }
 
@@ -643,10 +659,14 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider =
-            OpenAiProvider::new("openai", mock_server.uri(), Some("sk-test".to_string()));
+        let provider = OpenAiProvider::new(
+            "openai",
+            mock_server.uri(),
+            Some("sk-test".to_string()),
+            false,
+        );
         let req = base_request("gpt-4o-mini", vec![Message::user("what's the weather?")]);
-        let mut stream = provider.send(req).await.expect("send should succeed");
+        let mut stream = provider.send(req, &[]).await.expect("send should succeed");
 
         let mut events = Vec::new();
         while let Some(event) = stream.next().await {
@@ -709,10 +729,14 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider =
-            OpenAiProvider::new("openai", mock_server.uri(), Some("bad-key".to_string()));
+        let provider = OpenAiProvider::new(
+            "openai",
+            mock_server.uri(),
+            Some("bad-key".to_string()),
+            false,
+        );
         let req = base_request("gpt-4o-mini", vec![Message::user("hi")]);
-        let err = provider.send(req).await.err().expect("should fail");
+        let err = provider.send(req, &[]).await.err().expect("should fail");
 
         match err {
             GatewayError::Upstream { status, message } => {

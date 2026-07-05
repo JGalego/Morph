@@ -11,7 +11,11 @@
 //! is a good default, so v1 draws the line here explicitly rather than
 //! quietly doing a partial job. Streaming responses still get an
 //! observability hook (`tap_stream`) that captures usage/stop-reason for
-//! logging/metrics/stats without buffering the text itself.
+//! logging/metrics/stats without buffering the text itself — except when
+//! `[inspector]` is enabled, in which case it *also* buffers the text
+//! (only for that copy, not the one going to the client) since the
+//! dashboard has nothing useful to show otherwise. That extra buffering
+//! only happens when a user has explicitly opted into the debug dashboard.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -24,6 +28,7 @@ use morph_core::request::{CanonicalRequest, CanonicalResponse, ResponseEvent, St
 use morph_core::stream::ResponseStream;
 use morph_core::traits::ProtocolAdapter;
 
+use crate::inspector::ExchangeRecorder;
 use crate::representation;
 use crate::state::AppState;
 
@@ -47,6 +52,27 @@ fn error_outcome(protocol: &dyn ProtocolAdapter, err: &GatewayError) -> Pipeline
     PipelineOutcome::Error {
         status: err.status_code(),
         body: protocol.encode_error(err),
+    }
+}
+
+/// Records `sent`/`response`/`error` against `recorder` if the inspector is
+/// enabled — a no-op (and, thanks to short-circuiting, no `clone()` calls
+/// paid for) when it isn't.
+fn record_exchange(
+    state: &AppState,
+    recorder: &Option<ExchangeRecorder>,
+    sent: Option<&CanonicalRequest>,
+    response: Option<&CanonicalResponse>,
+    error: Option<&GatewayError>,
+    cached: bool,
+) {
+    if let (Some(hub), Some(rec)) = (&state.inspector, recorder) {
+        hub.record(rec.finish(
+            sent.cloned(),
+            response.cloned(),
+            error.map(|e| e.to_string()),
+            cached,
+        ));
     }
 }
 
@@ -118,17 +144,23 @@ async fn collect_response(
 /// (whether the client is still reading or not), a summary
 /// (usage/stop-reason) is available to run middleware and stats — without
 /// buffering the actual text, keeping first-byte latency for the client
-/// unaffected.
+/// unaffected. When the inspector is enabled, also accumulates the full
+/// response text (a separate copy, never touching what's sent to the
+/// client) so the dashboard has something to show for streamed requests.
 fn tap_stream(
     mut inner: ResponseStream,
     state: Arc<AppState>,
     req: CanonicalRequest,
+    recorder: Option<ExchangeRecorder>,
+    sent: Option<CanonicalRequest>,
 ) -> ResponseStream {
     let started = Instant::now();
     Box::pin(async_stream::stream! {
         let mut usage = Usage::default();
         let mut stop_reason = StopReason::EndTurn;
         let mut model = req.model.clone();
+        let mut text = String::new();
+        let capture_text = recorder.is_some();
 
         while let Some(item) = inner.next().await {
             if let Ok(event) = &item {
@@ -136,6 +168,7 @@ fn tap_stream(
                     ResponseEvent::Usage(u) => usage = *u,
                     ResponseEvent::MessageStop { stop_reason: sr } => stop_reason = *sr,
                     ResponseEvent::MessageStart { model: m, .. } => model = m.clone(),
+                    ResponseEvent::TextDelta { text: t, .. } if capture_text => text.push_str(t),
                     _ => {}
                 }
             }
@@ -152,6 +185,15 @@ fn tap_stream(
         for mw in &state.middlewares {
             let _ = mw.on_response(&req, &summary).await;
         }
+
+        if let (Some(hub), Some(rec)) = (&state.inspector, &recorder) {
+            let response = CanonicalResponse {
+                content: if text.is_empty() { Vec::new() } else { vec![ContentBlock::text(text)] },
+                ..summary
+            };
+            hub.record(rec.finish(sent, Some(response), None, false));
+        }
+
         tracing::debug!(
             request_id = %req.metadata.request_id,
             latency_ms = started.elapsed().as_millis(),
@@ -165,14 +207,26 @@ pub async fn handle(
     protocol: Arc<dyn ProtocolAdapter>,
     request_id: String,
     raw_body: Bytes,
+    incoming_headers: Vec<(String, String)>,
 ) -> PipelineOutcome {
     let req = match protocol.parse_request(&raw_body, &request_id) {
         Ok(r) => r,
         Err(e) => return error_outcome(protocol.as_ref(), &e),
     };
 
+    let config_snapshot = state.config.borrow().clone();
+    let recorder = state.inspector.is_some().then(|| {
+        ExchangeRecorder::start(
+            request_id.clone(),
+            protocol.protocol_id().to_string(),
+            config_snapshot.default_provider.clone(),
+            req.clone(),
+        )
+    });
+
     for mw in &state.middlewares {
         if let Err(e) = mw.on_request(&req).await {
+            record_exchange(&state, &recorder, None, None, Some(&e), false);
             return error_outcome(protocol.as_ref(), &e);
         }
     }
@@ -181,21 +235,22 @@ pub async fn handle(
     for t in &state.request_transformers {
         req = match t.transform_request(req) {
             Ok(r) => r,
-            Err(e) => return error_outcome(protocol.as_ref(), &e),
+            Err(e) => {
+                record_exchange(&state, &recorder, None, None, Some(&e), false);
+                return error_outcome(protocol.as_ref(), &e);
+            }
         };
     }
 
-    let config_snapshot = state.config.borrow().clone();
     let provider = match state.providers.get(&config_snapshot.default_provider) {
         Some(p) => p,
         None => {
-            return error_outcome(
-                protocol.as_ref(),
-                &GatewayError::Config(format!(
-                    "no provider configured under name \"{}\"",
-                    config_snapshot.default_provider
-                )),
-            )
+            let e = GatewayError::Config(format!(
+                "no provider configured under name \"{}\"",
+                config_snapshot.default_provider
+            ));
+            record_exchange(&state, &recorder, None, None, Some(&e), false);
+            return error_outcome(protocol.as_ref(), &e);
         }
     };
     let caps = provider.capabilities();
@@ -211,6 +266,7 @@ pub async fn handle(
                 for mw in &state.middlewares {
                     let _ = mw.on_response(&req, &cached).await;
                 }
+                record_exchange(&state, &recorder, None, Some(&cached), None, true);
                 return match protocol.encode_buffered(&cached) {
                     Ok(body) => PipelineOutcome::Buffered {
                         body,
@@ -222,14 +278,19 @@ pub async fn handle(
         }
     }
 
-    let stream = match provider.send(req.clone()).await {
+    let sent = recorder.is_some().then(|| req.clone());
+
+    let stream = match provider.send(req.clone(), &incoming_headers).await {
         Ok(s) => s,
-        Err(e) => return error_outcome(protocol.as_ref(), &e),
+        Err(e) => {
+            record_exchange(&state, &recorder, sent.as_ref(), None, Some(&e), false);
+            return error_outcome(protocol.as_ref(), &e);
+        }
     };
 
     if req.stream {
         let protocol_for_stream = protocol.clone();
-        let tapped = tap_stream(stream, state.clone(), req.clone());
+        let tapped = tap_stream(stream, state.clone(), req.clone(), recorder, sent);
         let byte_stream = tapped.map(move |event| -> Result<Bytes, std::io::Error> {
             match event {
                 Ok(ev) => match protocol_for_stream.encode_stream_event(&ev) {
@@ -252,13 +313,19 @@ pub async fn handle(
     } else {
         let resp = match collect_response(stream, &req.model).await {
             Ok(r) => r,
-            Err(e) => return error_outcome(protocol.as_ref(), &e),
+            Err(e) => {
+                record_exchange(&state, &recorder, sent.as_ref(), None, Some(&e), false);
+                return error_outcome(protocol.as_ref(), &e);
+            }
         };
         let mut resp = resp;
         for t in &state.response_transformers {
             resp = match t.transform_response(resp) {
                 Ok(r) => r,
-                Err(e) => return error_outcome(protocol.as_ref(), &e),
+                Err(e) => {
+                    record_exchange(&state, &recorder, sent.as_ref(), None, Some(&e), false);
+                    return error_outcome(protocol.as_ref(), &e);
+                }
             };
         }
         for mw in &state.middlewares {
@@ -269,6 +336,7 @@ pub async fn handle(
         if let Some(cache) = state.cache.as_ref().filter(|_| config_snapshot.cache) {
             cache.put(&req, resp.clone());
         }
+        record_exchange(&state, &recorder, sent.as_ref(), Some(&resp), None, false);
         match protocol.encode_buffered(&resp) {
             Ok(body) => PipelineOutcome::Buffered {
                 body,

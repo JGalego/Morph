@@ -24,7 +24,20 @@ pub trait ProviderAdapter: Send + Sync {
     /// Send a canonical request upstream. Always returns a stream — see
     /// `ResponseEvent`'s doc comment for why non-streaming providers still
     /// implement this by emitting one synchronous burst of events.
-    async fn send(&self, req: CanonicalRequest) -> Result<ResponseStream, GatewayError>;
+    ///
+    /// `incoming_headers` is the raw header list from the client's original
+    /// HTTP request to Morph, given to every provider (not carried on
+    /// `CanonicalRequest` itself, so it never ends up in a log line or a
+    /// cache key by accident). Most adapters ignore it and authenticate
+    /// with their own configured credential; an adapter that supports
+    /// `passthrough_auth` uses it instead, to forward whatever credential
+    /// the client already has (e.g. an OAuth-backed subscription login)
+    /// rather than requiring Morph to have its own API key.
+    async fn send(
+        &self,
+        req: CanonicalRequest,
+        incoming_headers: &[(String, String)],
+    ) -> Result<ResponseStream, GatewayError>;
 }
 
 /// Translates between one client-facing wire protocol (OpenAI Chat

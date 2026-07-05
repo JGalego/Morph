@@ -290,6 +290,16 @@ impl ProtocolAdapter for AnthropicMessagesProtocol {
             let role = match m.role.as_str() {
                 "user" => Role::User,
                 "assistant" => Role::Assistant,
+                // Real Anthropic clients (Claude Code among them) do send
+                // `role: "system"` turns interleaved in `messages` — e.g.
+                // injected reminders — distinct from the top-level `system`
+                // field, which only covers the initial prompt. `Role::System`
+                // is folded back into the top-level `system` field by
+                // `AnthropicProvider::build_request_body` on the way out, so
+                // accepting it here (rather than rejecting the request
+                // outright, which is what a stricter-than-necessary parser
+                // was doing before) round-trips it correctly.
+                "system" => Role::System,
                 other => {
                     return Err(GatewayError::InvalidRequest(format!(
                         "unsupported anthropic message role '{other}'"
@@ -525,6 +535,48 @@ mod tests {
         assert!(matches!(req.tool_choice, Some(ToolChoice::Auto)));
         assert_eq!(req.metadata.ingress_protocol, "anthropic_messages");
         assert_eq!(req.metadata.request_id, "req-1");
+    }
+
+    #[test]
+    fn accepts_inline_system_role_messages() {
+        // Real Anthropic clients (Claude Code among them) send `role:
+        // "system"` turns interleaved in `messages` — e.g. injected
+        // reminders — distinct from the top-level `system` field. This
+        // must be accepted, not rejected as an "unsupported role".
+        let raw = br#"{
+            "model": "claude-3-5-sonnet-20241022",
+            "max_tokens": 1024,
+            "system": "Be terse.",
+            "messages": [
+                {"role": "system", "content": "Reminder: stay in character."},
+                {"role": "user", "content": "hi"}
+            ],
+            "stream": false
+        }"#;
+
+        let req = protocol().parse_request(raw, "req-1").unwrap();
+
+        assert_eq!(req.system, Some("Be terse.".to_string()));
+        assert_eq!(req.messages.len(), 2);
+        assert_eq!(req.messages[0].role, Role::System);
+        assert_eq!(
+            req.messages[0].text_content(),
+            "Reminder: stay in character."
+        );
+        assert_eq!(req.messages[1].role, Role::User);
+    }
+
+    #[test]
+    fn rejects_genuinely_unknown_roles() {
+        let raw = br#"{
+            "model": "claude-3-5-sonnet-20241022",
+            "max_tokens": 1024,
+            "messages": [{"role": "narrator", "content": "hi"}],
+            "stream": false
+        }"#;
+
+        let err = protocol().parse_request(raw, "req-1").unwrap_err();
+        assert!(matches!(err, GatewayError::InvalidRequest(msg) if msg.contains("narrator")));
     }
 
     #[test]

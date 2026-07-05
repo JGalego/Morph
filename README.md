@@ -1,103 +1,99 @@
 # Morph
 
-**Morph is a transparent AI gateway.** It sits between any AI client and any
-LLM provider, automatically deciding whether a prompt is better sent as
-plain text, an image, or both — then forwards it and translates the
-response back. Your client never has to change.
+A transparent AI gateway. It sits between your AI client and your LLM
+provider, automatically turning prompts into whatever format the model
+handles best — plain text, an image, or both — with zero client-side
+changes.
 
 ```
 Your AI App  --->  Morph (localhost:8080)  --->  Any LLM Provider
-   (any protocol)         detect → plan → render        (any protocol)
 ```
 
-## Get started in under a minute
+## Quickstart
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JGalego/Morph/main/install.sh | sh
-export OPENAI_API_KEY=sk-...
 morph
 ```
 
-That's it — no config file to write by hand, nothing else to install. The
-first time you run `morph` in a new directory it creates a starter
-`morph.toml` for you and tells you what to do next. If something looks
-wrong, run `morph doctor` — it checks your config, your API keys, your
-listen address, and your plugin setup, and tells you in plain English what
-to fix.
+Point your client's API base URL at `http://localhost:8080` — nothing else
+changes. First run in a new directory auto-creates `morph.toml`. Something
+wrong? `morph doctor`.
 
-Now point your existing AI client at `http://localhost:8080` instead of
-your provider's real endpoint. Nothing else about your client needs to
-change — Morph speaks its wire protocol already.
+## Tutorial: turn every prompt into an image
 
-No Rust toolchain, no Docker, and no dependencies to install by hand: the
-install script above downloads a single static binary for your platform.
-Building from source (`cargo build --release`) works too if you prefer it.
+The core trick, hands-on — every prompt gets rendered before the model
+sees it.
 
-## What it actually does
+```bash
+morph init
+```
 
-Every request goes through:
+Edit `morph.toml`:
 
-1. **Protocol adapter** — recognizes which client wire format arrived
-   (OpenAI Chat Completions, Anthropic Messages, or Ollama) and parses it
-   into one internal representation.
-2. **Content detection** — classifies each message: is this prose,
-   Markdown, code, JSON, a table, a terminal log, a stack trace, ...?
-3. **Representation planning** — decides, per segment, whether text alone
-   is best, or whether rendering it as an image would help the model
-   (and if so, whether the image should *accompany* the text or, for
-   content where an LLM's own vision transcription would be lossy — JSON,
-   code, config — the text always stays, and the image is only ever an
-   additive aid, never a replacement).
-4. **Rendering** — if warranted, renders the segment (Markdown, code with
-   syntax highlighting, a JSON tree, a table, or an ANSI-aware terminal
-   log) to SVG/PNG and attaches it to the request.
-5. **Provider adapter** — forwards the (possibly enriched) request to your
-   real backend in *its* wire format, streams the response back, and
-   translates it into whatever format your client is expecting — even if
-   that's a different protocol than the one the provider speaks.
+```toml
+mode = "force_image_only"
+```
 
-Every one of these is a stable Rust trait (`ProtocolAdapter`,
-`Renderer`, `ProviderAdapter`, `Classifier`, `RepresentationPlanner`,
-`Transformer`). See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the
-full pipeline and crate layout.
+Then run your client through Morph:
 
-## Supported today
+```bash
+morph -- claude      # or: morph, then point any client at localhost:8080
+```
 
-- **Ingress protocols** (what your client speaks to Morph): OpenAI Chat
-  Completions, Anthropic Messages, Ollama.
-- **Providers** (what Morph speaks to your LLM): a generic OpenAI-wire
-  adapter — which is also what makes Azure OpenAI, Ollama, vLLM, LM
-  Studio, OpenRouter, Together, Groq, Cerebras, Mistral, DeepSeek, and xAI
-  work, since they all speak the same wire format — plus a native
-  Anthropic Messages adapter.
-- **Renderers**: Markdown/Documents, Code (syntax highlighted), JSON
-  (tree view), Tables, and ANSI-aware terminal logs/stack traces.
-- **Plugins**: real, sandboxed WASM plugins (wasmtime, no filesystem/network
-  access, CPU and memory limits enforced) can add renderers, classifiers,
-  and request/response transformers without recompiling Morph. See
-  [`docs/PLUGINS.md`](docs/PLUGINS.md).
+Content that must stay exact — JSON, code, config — keeps its text
+regardless; only prose, Markdown, tables, and logs get replaced (see
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the exact rule). This
+needs a vision-capable model on the other end — a text-only local model
+will reject the image.
 
-What's deliberately **not** attempted yet — see
-[`docs/ROADMAP.md`](docs/ROADMAP.md) for why and what the extension points
-already support: native Gemini/Bedrock/Cohere adapters (their own wire
-formats, distinct from the OpenAI-compatible majority), LaTeX/math
-rendering, Mermaid/UML diagram generation, full HTML/CSS rendering, and an
-ML-based representation planner (the trait is ready; no model is trained).
+Two ways to see it happening, no guessing required:
+
+- **Live**: set `[inspector] enabled = true`, open
+  `http://localhost:8080/_inspector` — every request, side by side, with
+  the actual rendered image inline.
+- **Offline, for one prompt**: `morph inspect "your text" --save-images
+  ./out` — writes the exact PNG Morph would send. No server needed.
+
+No Anthropic API key on hand? If Claude Code is logged into a claude.ai
+subscription, use passthrough auth instead of a key:
+
+```toml
+[providers.anthropic]
+kind = "anthropic"
+base_url = "https://api.anthropic.com/v1"
+passthrough_auth = true
+```
+
+Morph then forwards whatever credential Claude Code already sends,
+instead of needing its own.
+
+## How it works
+
+Every request: detect content (prose? code? JSON? a table? a log?) →
+decide per-segment whether text, an image, or both serves the model best
+→ render if so → forward to the real provider in its wire format →
+translate the response back, even across protocols. Every stage is a
+swappable Rust trait — see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+## Supported
+
+| | |
+|---|---|
+| **Clients speak to Morph via** | OpenAI Chat Completions, Anthropic Messages, Ollama |
+| **Morph speaks to providers via** | OpenAI-wire (covers OpenAI, Azure, Ollama, vLLM, LM Studio, OpenRouter, Together, Groq, Cerebras, Mistral, DeepSeek, xAI) and native Anthropic |
+| **Renderers** | Markdown/documents, syntax-highlighted code, JSON trees, tables, ANSI-aware logs |
+| **Plugins** | Sandboxed WASM (wasmtime) — add renderers/classifiers/transformers, no recompile. [`docs/PLUGINS.md`](docs/PLUGINS.md) |
+
+Deliberately not attempted yet (and why): [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Configuration
 
-One file, `morph.toml`, hot-reloaded — edit it while `morph` is running and
-changes to routing/theme/rendering thresholds/cache/rate-limit/auth take
-effect immediately, no restart:
+One file, hot-reloaded — edits apply without restarting:
 
 ```toml
-listen = "0.0.0.0:8080"
-mode = "auto"              # auto | force_text | force_hybrid
+mode = "auto"              # auto | force_text | force_hybrid | force_image_only
 default_provider = "openai"
-theme = "dark"
-cache = true
-stream = true
-metrics = true
 
 [providers.openai]
 kind = "openai"
@@ -105,50 +101,50 @@ base_url = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
 ```
 
-See [`morph.example.toml`](morph.example.toml) for every available field,
-and run `morph config` to print your current effective configuration.
+Full field list: [`morph.example.toml`](morph.example.toml). Current
+effective config: `morph config`.
 
 ## CLI
 
 ```
-morph              start the gateway (also what running with no subcommand does)
-morph init          write a starter morph.toml
-morph doctor        check your environment/config for common problems
-morph config        print the effective configuration
-morph providers     list configured providers and their status
-morph render FILE    render a Markdown/code/JSON/table/log file standalone (no server)
-morph inspect TEXT   dry-run detect+plan against a prompt — see what Morph would do, and why
-morph plugins       list loaded WASM plugins
-morph test          run a local pipeline smoke test (no network)
-morph benchmark     time each built-in renderer
+morph                 start the gateway
+morph -- <command>    start the gateway, then run <command> against it (any AI CLI — Claude Code, Cursor, ...)
+morph init            write a starter morph.toml
+morph doctor          diagnose config/environment problems
+morph inspect TEXT    preview the detect→plan decision for a prompt (add --save-images to render it)
+morph render FILE     render a file standalone, no server
+morph providers       list configured providers
+morph plugins         list loaded WASM plugins
+morph config          print effective configuration
+morph test            local pipeline smoke test
+morph benchmark       time each renderer
 ```
 
-## Building from source
+`morph -- <command>` sets every common base-URL env var at once
+(`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `OPENAI_API_BASE`,
+`OLLAMA_HOST`); `--env NAME=VALUE` covers anything nonstandard.
+
+## Build & run
 
 ```bash
-git clone https://github.com/JGalego/Morph
-cd Morph
-cargo build --release
-./target/release/morph
+git clone https://github.com/JGalego/Morph && cd Morph
+cargo build --release && ./target/release/morph
 ```
 
-Requires Rust 1.85+. Running the full test suite: `cargo test --workspace`.
-Building the example WASM plugin requires the `wasm32-wasip2` target:
-`rustup target add wasm32-wasip2`.
-
-## Docker
+Requires Rust 1.85+. `cargo test --workspace` for the full suite. The
+example WASM plugin needs `rustup target add wasm32-wasip2`.
 
 ```bash
 docker run -p 8080:8080 -e OPENAI_API_KEY=sk-... ghcr.io/jgalego/morph
 ```
 
-## Documentation
+## Docs
 
-- [Architecture & pipeline](docs/ARCHITECTURE.md)
-- [Provider adapters](docs/PROVIDERS.md)
-- [Rendering engine](docs/RENDERING.md)
-- [Plugin development](docs/PLUGINS.md)
-- [Roadmap & known scope boundaries](docs/ROADMAP.md)
+[Architecture](docs/ARCHITECTURE.md) ·
+[Providers](docs/PROVIDERS.md) ·
+[Rendering](docs/RENDERING.md) ·
+[Plugins](docs/PLUGINS.md) ·
+[Roadmap](docs/ROADMAP.md)
 
 ## License
 

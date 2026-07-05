@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Morph Inspector</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #14151a; --panel: #1c1e26; --border: #2c2f3a; --text: #e7e8ec; --muted: #8a8d9a;
+    --accent: #7c8cff; --good: #3ecf8e; --bad: #ff6b6b; --warn: #f2c94c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; position: sticky; top: 0; background: var(--bg); z-index: 10; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  #status { margin-left: auto; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); }
+  #status.live { color: var(--good); border-color: var(--good); }
+  #status.down { color: var(--bad); border-color: var(--bad); }
+  button { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 12px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  main { padding: 16px 24px 48px; max-width: 1400px; margin: 0 auto; }
+  #empty { color: var(--muted); padding: 48px 0; text-align: center; }
+  .exchange { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 16px; overflow: hidden; }
+  .exchange-header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--panel); font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+  .exchange-header .route { color: var(--text); font-weight: 600; }
+  .badge { border-radius: 999px; padding: 2px 8px; font-size: 11px; border: 1px solid var(--border); }
+  .badge-cached { color: var(--warn); border-color: var(--warn); }
+  .badge-error { color: var(--bad); border-color: var(--bad); }
+  .badge-rendered { color: var(--accent); border-color: var(--accent); font-size: 10px; margin-top: 4px; display: inline-block; }
+  .columns { display: flex; flex-wrap: wrap; }
+  .column { flex: 1 1 320px; min-width: 300px; padding: 12px 14px; border-left: 1px solid var(--border); }
+  .column:first-child { border-left: none; }
+  .column h3 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .empty-slot { color: var(--muted); font-size: 12px; font-style: italic; }
+  .message { margin-bottom: 10px; }
+  .message .role { font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+  .block-text { white-space: pre-wrap; word-break: break-word; background: #10121a; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-family: ui-monospace, monospace; font-size: 12.5px; }
+  .block-image { margin-top: 4px; }
+  .block-image img { max-width: 100%; border-radius: 6px; border: 1px solid var(--border); display: block; }
+  .block-tool { background: #10121a; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); }
+  .error-banner { background: #2a1418; color: var(--bad); padding: 8px 14px; font-size: 12px; border-top: 1px solid var(--border); font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Morph Inspector</h1>
+  <span class="sub">what Morph got vs. what it sent</span>
+  <button id="clear">Clear view</button>
+  <span id="status">connecting…</span>
+</header>
+<main>
+  <div id="empty">No requests captured yet. Send something through Morph and it'll show up here live.</div>
+  <div id="list"></div>
+</main>
+<script>
+const list = document.getElementById('list');
+const empty = document.getElementById('empty');
+const status = document.getElementById('status');
+
+function esc(s) { return String(s ?? ''); }
+
+function renderBlock(block) {
+  const el = document.createElement('div');
+  if (block.type === 'text') {
+    el.className = 'block-text';
+    el.textContent = block.text;
+    return el;
+  }
+  if (block.type === 'image') {
+    el.className = 'block-image';
+    const img = document.createElement('img');
+    if (block.source && block.source.kind === 'base64') {
+      img.src = `data:${block.mime};base64,${block.source.data}`;
+    } else if (block.source && block.source.kind === 'url') {
+      img.src = block.source.url;
+    }
+    el.appendChild(img);
+    if (block.rendered_by_morph) {
+      const badge = document.createElement('div');
+      badge.className = 'badge-rendered';
+      badge.textContent = 'rendered by Morph';
+      el.appendChild(badge);
+    }
+    return el;
+  }
+  el.className = 'block-tool';
+  if (block.type === 'tool_use') {
+    el.textContent = `tool_use ${block.name}(${JSON.stringify(block.input)})`;
+  } else if (block.type === 'tool_result') {
+    el.textContent = `tool_result: ${block.content}`;
+  } else {
+    el.textContent = JSON.stringify(block);
+  }
+  return el;
+}
+
+function renderMessages(messages) {
+  const wrap = document.createElement('div');
+  if (!messages || messages.length === 0) {
+    wrap.className = 'empty-slot';
+    wrap.textContent = '(no messages)';
+    return wrap;
+  }
+  for (const msg of messages) {
+    const msgEl = document.createElement('div');
+    msgEl.className = 'message';
+    const role = document.createElement('div');
+    role.className = 'role';
+    role.textContent = msg.role;
+    msgEl.appendChild(role);
+    for (const block of (msg.content || [])) {
+      msgEl.appendChild(renderBlock(block));
+    }
+    wrap.appendChild(msgEl);
+  }
+  return wrap;
+}
+
+function renderColumn(title, request) {
+  const col = document.createElement('div');
+  col.className = 'column';
+  const h = document.createElement('h3');
+  h.textContent = title;
+  col.appendChild(h);
+  if (!request) {
+    const e = document.createElement('div');
+    e.className = 'empty-slot';
+    e.textContent = '— not reached —';
+    col.appendChild(e);
+    return col;
+  }
+  col.appendChild(renderMessages(request.messages));
+  return col;
+}
+
+function renderResponseColumn(response) {
+  const col = document.createElement('div');
+  col.className = 'column';
+  const h = document.createElement('h3');
+  h.textContent = 'Response';
+  col.appendChild(h);
+  if (!response) {
+    const e = document.createElement('div');
+    e.className = 'empty-slot';
+    e.textContent = '— not reached —';
+    col.appendChild(e);
+    return col;
+  }
+  col.appendChild(renderMessages([{ role: response.stop_reason || 'assistant', content: response.content }]));
+  return col;
+}
+
+function renderExchange(ex) {
+  const card = document.createElement('div');
+  card.className = 'exchange';
+
+  const header = document.createElement('div');
+  header.className = 'exchange-header';
+  const route = document.createElement('span');
+  route.className = 'route';
+  route.textContent = `${ex.protocol} → ${ex.provider}`;
+  header.appendChild(route);
+  const time = document.createElement('span');
+  time.textContent = new Date(ex.timestamp_ms).toLocaleTimeString();
+  header.appendChild(time);
+  const latency = document.createElement('span');
+  latency.textContent = `${ex.latency_ms}ms`;
+  header.appendChild(latency);
+  if (ex.cached) {
+    const b = document.createElement('span');
+    b.className = 'badge badge-cached';
+    b.textContent = 'cached';
+    header.appendChild(b);
+  }
+  if (ex.error) {
+    const b = document.createElement('span');
+    b.className = 'badge badge-error';
+    b.textContent = 'error';
+    header.appendChild(b);
+  }
+  card.appendChild(header);
+
+  const columns = document.createElement('div');
+  columns.className = 'columns';
+  columns.appendChild(renderColumn('Received', ex.received));
+  columns.appendChild(renderColumn('Sent', ex.sent));
+  columns.appendChild(renderResponseColumn(ex.response));
+  card.appendChild(columns);
+
+  if (ex.error) {
+    const banner = document.createElement('div');
+    banner.className = 'error-banner';
+    banner.textContent = esc(ex.error);
+    card.appendChild(banner);
+  }
+
+  return card;
+}
+
+function prepend(ex) {
+  empty.style.display = 'none';
+  list.insertBefore(renderExchange(ex), list.firstChild);
+}
+
+fetch('/_inspector/api/events').then(r => r.json()).then(events => {
+  if (events.length === 0) return;
+  empty.style.display = 'none';
+  for (const ex of events) list.appendChild(renderExchange(ex));
+}).catch(() => {});
+
+document.getElementById('clear').addEventListener('click', () => {
+  list.innerHTML = '';
+  empty.style.display = 'block';
+});
+
+function connect() {
+  const es = new EventSource('/_inspector/api/stream');
+  es.onopen = () => { status.textContent = 'live'; status.className = 'live'; };
+  es.onerror = () => { status.textContent = 'reconnecting…'; status.className = 'down'; };
+  es.onmessage = (e) => {
+    try { prepend(JSON.parse(e.data)); } catch (err) { /* ignore malformed event */ }
+  };
+}
+connect();
+</script>
+</body>
+</html>

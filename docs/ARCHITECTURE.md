@@ -56,11 +56,22 @@ implementing one of these traits — nothing else in the pipeline changes.
   text is *always* kept. An LLM's own vision-based transcription of an
   image is lossy for anything that needs to round-trip exactly, so an image
   is only ever an *additive* aid for structure recognition, never a
-  replacement, for these kinds.
+  replacement, for these kinds — this holds under every `mode`, including
+  `force_image_only` (see below).
 - **Code defaults to text-only**, even when vision-capable and even under
-  `mode = "force_hybrid"`, unless `render.allow_code_as_image` is explicitly
-  set. A coding agent needs precise, editable text; Morph must never
-  silently degrade that by default.
+  `mode = "force_hybrid"`/`"force_image_only"`, unless
+  `render.allow_code_as_image` is explicitly set — and even then, code is
+  capped at `Hybrid`, never `ImageOnly`. A coding agent needs precise,
+  editable text; Morph must never silently degrade that by default.
+- **`mode = "force_image_only"`** is the one place `Representation::ImageOnly`
+  is actually produced (`morph-gateway`'s representation stage already
+  handles it correctly regardless — it drops a message's text content only
+  when rendering that segment actually succeeds, so a content kind with no
+  registered renderer, e.g. Math/Mermaid/Uml/Html, degrades gracefully back
+  to text rather than losing the prompt). It replaces text with an image
+  for prose, Markdown, tables, and logs/traces — everything *not* covered
+  by `requires_exact_text()` — since those are the kinds where full
+  replacement doesn't risk losing information the model needs verbatim.
 - **Response transformers only run on the buffered (non-streaming) path.**
   Applying a transformer to a live token stream means either buffering it
   anyway (defeating streaming's latency benefit) or risking a pattern that
@@ -95,3 +106,21 @@ the `cache`/`auth`/`rate_limit` enabled flags. Edit `morph.toml` while
   (API keys, AWS keys, bearer tokens, emails) from both request and
   response content before it crosses the provider boundary — a best-effort
   safety net, not a substitute for not putting secrets in prompts.
+- `passthrough_auth` (see `docs/PROVIDERS.md`) is an explicit, opt-in
+  trade-off: with it set, Morph forwards whatever credential the client
+  sent straight to the real provider without inspecting or gating it
+  itself — that's what makes an OAuth-backed subscription login work
+  through Morph with no separate API key, but it also means `[auth]`/
+  `[rate_limit]` in `morph.toml` (which gate access to Morph itself, not to
+  the upstream) are the only access control left in that mode.
+- `[inspector]` (off by default) is the one feature that's a deliberate
+  exception to "no prompt/response content by default": enabling it holds
+  full request/response content — including any rendered images — in
+  memory and serves it over HTTP at `/_inspector`, specifically so you can
+  *see* what Morph is doing. It's gated by the same `[auth]`/`[rate_limit]`
+  middleware as the main API routes (registered on the same router, before
+  those layers are applied), but there's no additional access control
+  beyond that — don't enable it on an instance reachable by anyone you
+  wouldn't also hand your provider API key to. When disabled,
+  `AppState.inspector` is `None` and `pipeline::handle` never even clones a
+  `CanonicalRequest` for it — zero capture, zero overhead.

@@ -23,6 +23,7 @@ fn parse_mode(s: &str) -> PlannerMode {
     match s {
         "force_text" => PlannerMode::ForceText,
         "force_hybrid" => PlannerMode::ForceHybrid,
+        "force_image_only" => PlannerMode::ForceImageOnly,
         _ => PlannerMode::Auto,
     }
 }

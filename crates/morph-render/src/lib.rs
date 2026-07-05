@@ -65,6 +65,8 @@ mod tests {
         assert!(covered(ContentKind::Table));
         assert!(covered(ContentKind::TerminalLog));
         assert!(covered(ContentKind::StackTrace));
+        assert!(covered(ContentKind::ShellSession));
+        assert!(covered(ContentKind::PlainText));
         // Explicitly out of scope for v1 — see the module doc comment.
         assert!(!covered(ContentKind::Math));
         assert!(!covered(ContentKind::Mermaid));

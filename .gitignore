@@ -24,3 +24,6 @@ plugins/*/target
 
 # Rendered output produced by ad-hoc `morph render` runs during local testing
 /render-output/
+
+# Generated output from morph inspect runs (e.g., `morph inspect --output json`).
+out/

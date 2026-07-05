@@ -10,6 +10,7 @@ metrics = true
 kind = "openai"
 base_url = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
+passthrough_auth = false
 
 [auth]
 enabled = false
@@ -30,3 +31,7 @@ dir = "./plugins"
 [logging]
 log_prompts = false
 json = true
+
+[inspector]
+enabled = false
+max_events = 50
