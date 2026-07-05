@@ -1,0 +1,53 @@
+// Morph's WASM plugin interface. Deliberately one small, shared functional
+// shape — bytes/JSON in, bytes/JSON out — rather than a bespoke ABI per
+// plugin kind. Which pipeline stage a plugin is invoked at (renderer,
+// classifier, transformer) is decided by its `manifest().kind`, not by a
+// different wire shape. This keeps the sandboxed surface small and
+// auditable. Provider adapters are intentionally NOT part of this surface —
+// they hold API keys and make outbound network calls, so they stay native,
+// compiled-in Rust rather than sandboxed guest code.
+package morph:plugin@0.1.0;
+
+interface plugin {
+    /// Static facts about a plugin, fetched once at load time.
+    record plugin-info {
+        name: string,
+        version: string,
+        /// One of "renderer", "classifier", "transformer". The host decides
+        /// which of the functions below it will actually call based on this.
+        kind: string,
+        /// ABI/interface version this plugin was built against, e.g. "0.1.0".
+        /// The host refuses to load a plugin whose abi-version it does not
+        /// recognize, rather than guessing at compatibility.
+        abi-version: string,
+        /// For kind == "renderer": the `morph_core::ContentKind` snake_case
+        /// names (e.g. "json", "code") this plugin claims to handle. The
+        /// host uses this to answer `Renderer::supports` without invoking
+        /// the plugin. Ignored for other kinds.
+        supported-kinds: list<string>,
+    }
+
+    manifest: func() -> plugin-info;
+
+    /// Renderer entry point. `input-json` is a JSON-encoded (snake_case)
+    /// `{ kind, raw, metrics, language, options: { theme, max_width_px, scale, format } }`
+    /// (mirrors morph_core::content::DetectedContent + RenderOptions).
+    /// On success, returns JSON-encoded
+    /// `{ mime, bytes_base64, width, height, alt_text }` (mirrors RenderedAsset,
+    /// with `bytes` base64-encoded since WIT strings must be valid UTF-8).
+    render: func(input-json: string) -> result<string, string>;
+
+    /// Classifier entry point. Returns a JSON array of `[kind, confidence]`
+    /// pairs, most confident first — mirrors `Vec<(ContentKind, f32)>`.
+    classify: func(text: string) -> result<string, string>;
+
+    /// Transformer entry points. `request-json`/`response-json` are the
+    /// serde_json encoding of CanonicalRequest/CanonicalResponse; the
+    /// plugin returns a transformed document in the same shape.
+    transform-request: func(request-json: string) -> result<string, string>;
+    transform-response: func(response-json: string) -> result<string, string>;
+}
+
+world plugin-world {
+    export plugin;
+}

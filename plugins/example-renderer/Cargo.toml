@@ -1,0 +1,26 @@
+[workspace]
+# Deliberately its own workspace: this crate targets wasm32-wasip2 and is
+# built independently of the native Morph workspace (see
+# docs/PLUGINS.md for the build command). Without this empty `[workspace]`
+# table, Cargo would try to fold it into the root workspace it's nested
+# under, which is not what we want for a guest-targeted plugin crate.
+
+[package]
+name = "example-renderer"
+description = "Example Morph plugin: renders plain text/Markdown as a styled SVG sticky-note card"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[dependencies]
+wit-bindgen = "0.58"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = "s"
+lto = true

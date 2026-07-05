@@ -1,0 +1,23 @@
+[package]
+name = "morph-middleware"
+description = "Cross-cutting request/response concerns for Morph: logging, metrics, request recording, redaction, response caching"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+morph-core.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+metrics.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+moka.workspace = true
+tokio.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

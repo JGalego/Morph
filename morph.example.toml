@@ -1,0 +1,32 @@
+listen = "0.0.0.0:8080"
+mode = "auto"
+default_provider = "openai"
+theme = "dark"
+cache = true
+stream = true
+metrics = true
+
+[providers.openai]
+kind = "openai"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+
+[auth]
+enabled = false
+api_keys = []
+
+[rate_limit]
+enabled = false
+requests_per_minute = 600
+
+[render]
+min_tokens_for_rendering = 120
+allow_code_as_image = false
+
+[plugins]
+enabled = false
+dir = "./plugins"
+
+[logging]
+log_prompts = false
+json = true

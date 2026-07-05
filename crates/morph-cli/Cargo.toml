@@ -1,0 +1,32 @@
+[package]
+name = "morph-cli"
+description = "The morph command-line tool: run the gateway, scaffold config, diagnose the environment, and render files standalone"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "morph"
+path = "src/main.rs"
+
+[dependencies]
+morph-core.workspace = true
+morph-config.workspace = true
+morph-gateway.workspace = true
+morph-detect.workspace = true
+morph-render.workspace = true
+morph-plugin-host.workspace = true
+
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

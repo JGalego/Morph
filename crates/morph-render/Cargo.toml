@@ -1,0 +1,22 @@
+[package]
+name = "morph-render"
+description = "Rendering engine: Markdown/Code/JSON/Table/Log to SVG/PNG"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+morph-core.workspace = true
+usvg.workspace = true
+resvg.workspace = true
+tiny-skia.workspace = true
+syntect.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+insta.workspace = true

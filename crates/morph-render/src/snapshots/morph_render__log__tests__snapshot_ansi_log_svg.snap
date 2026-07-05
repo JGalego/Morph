@@ -1,0 +1,6 @@
+---
+source: crates/morph-render/src/log.rs
+assertion_line: 349
+expression: svg
+---
+<svg xmlns="http://www.w3.org/2000/svg" width="219.20" height="68.40" viewBox="0 0 219.20 68.40"><rect x="0" y="0" width="219.20" height="68.40" fill="#1e1e2e"/><text x="16.00" y="29.00" font-family="DejaVu Sans Mono" font-size="13.00" fill="#f38ba8" xml:space="preserve">ERROR</text><text x="55.00" y="29.00" font-family="DejaVu Sans Mono" font-size="13.00" fill="#cdd6f4" xml:space="preserve"> connection refused</text><text x="16.00" y="48.50" font-family="DejaVu Sans Mono" font-size="13.00" fill="#a6e3a1" xml:space="preserve">INFO</text><text x="47.20" y="48.50" font-family="DejaVu Sans Mono" font-size="13.00" fill="#cdd6f4" xml:space="preserve"> listening on :8080</text></svg>

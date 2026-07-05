@@ -1,0 +1,26 @@
+# Build artifacts
+/target
+**/target
+plugins/*/target
+
+# Cargo.lock is committed intentionally (this workspace produces a binary,
+# `morph` — lock files should be checked in for reproducible builds).
+
+# Local, possibly secret-bearing config — ship morph.example.toml instead.
+/morph.toml
+
+# insta snapshot review artifacts (pending snapshots should never be committed)
+*.snap.new
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Env files that might carry API keys
+.env
+.env.*
+
+# Rendered output produced by ad-hoc `morph render` runs during local testing
+/render-output/

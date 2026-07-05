@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build example plugin (guest, wasm32-wasip2)
+        working-directory: plugins/example-renderer
+        run: cargo build --target wasm32-wasip2 --release
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace
+
+      - name: cargo build --release
+        run: cargo build --release -p morph-cli

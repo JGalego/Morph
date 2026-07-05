@@ -1,0 +1,20 @@
+[package]
+name = "morph-core"
+description = "Canonical domain types and stable trait contracts for Morph"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+bytes.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
