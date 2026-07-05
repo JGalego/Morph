@@ -22,6 +22,24 @@ fn connectable_host_port(listen: &str) -> String {
     }
 }
 
+/// `Command::new(program).spawn()` calls `CreateProcess` directly, which
+/// only auto-resolves `.exe`/`.com` — never the `.cmd`/`.bat` shims npm (and
+/// most other JS tooling) installs on Windows as the real entry point.
+/// Routing through `cmd /C` gets `cmd.exe`'s own PATHEXT-aware search and
+/// script dispatch instead, the same workaround Node's `child_process.spawn`
+/// applies internally for this exact case.
+#[cfg(windows)]
+fn windows_aware_command(program: &str) -> Command {
+    let mut command = Command::new("cmd");
+    command.arg("/C").arg(program);
+    command
+}
+
+#[cfg(not(windows))]
+fn windows_aware_command(program: &str) -> Command {
+    Command::new(program)
+}
+
 async fn wait_until_listening(host_port: &str) -> anyhow::Result<()> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -59,7 +77,7 @@ pub async fn execute(
     spawn_server(config);
     wait_until_listening(&host_port).await?;
 
-    let mut command = Command::new(&program);
+    let mut command = windows_aware_command(&program);
     command
         .args(&args)
         // Every common AI-client base-URL convention, all pointed at

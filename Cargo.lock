@@ -2060,7 +2060,7 @@ dependencies = [
 
 [[package]]
 name = "morph-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64",
@@ -2081,7 +2081,7 @@ dependencies = [
 
 [[package]]
 name = "morph-config"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "notify",
  "serde",
@@ -2094,7 +2094,7 @@ dependencies = [
 
 [[package]]
 name = "morph-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2106,7 +2106,7 @@ dependencies = [
 
 [[package]]
 name = "morph-detect"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "morph-core",
  "regex",
@@ -2116,7 +2116,7 @@ dependencies = [
 
 [[package]]
 name = "morph-gateway"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2151,7 +2151,7 @@ dependencies = [
 
 [[package]]
 name = "morph-middleware"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "metrics",
@@ -2167,14 +2167,14 @@ dependencies = [
 
 [[package]]
 name = "morph-plugin-abi"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "wasmtime",
 ]
 
 [[package]]
 name = "morph-plugin-host"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64",
  "morph-core",
@@ -2189,7 +2189,7 @@ dependencies = [
 
 [[package]]
 name = "morph-protocols"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "morph-core",
  "serde",
@@ -2198,7 +2198,7 @@ dependencies = [
 
 [[package]]
 name = "morph-providers"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2215,7 +2215,7 @@ dependencies = [
 
 [[package]]
 name = "morph-render"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "insta",
  "morph-core",
