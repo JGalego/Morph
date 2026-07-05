@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/JGalego/Morph/actions/workflows/ci.yml"><img src="https://github.com/JGalego/Morph/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/JGalego/Morph/blob/main/LICENSE"><img src="https://img.shields.io/github/license/JGalego/Morph" alt="License"></a>
-  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-1.85%2B-orange" alt="Rust 1.85+"></a>
+  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-1.94%2B-orange" alt="Rust 1.94+"></a>
   <a href="https://github.com/JGalego/Morph/stargazers"><img src="https://img.shields.io/github/stars/JGalego/Morph" alt="Stars"></a>
 </p>
 
@@ -118,7 +118,7 @@ git clone https://github.com/JGalego/Morph && cd Morph
 cargo build --release && ./target/release/morph
 ```
 
-Needs Rust 1.85+; run `cargo test --workspace` for the full suite, and `rustup target add wasm32-wasip2` if you want the example WASM plugin to build too.
+Needs Rust 1.94+; run `cargo test --workspace` for the full suite, and `rustup target add wasm32-wasip2` if you want the example WASM plugin to build too.
 
 Or skip the build and run it in Docker instead:
 

@@ -6,7 +6,7 @@
 # as a strong starting point and verify it once in CI/locally before
 # relying on it.
 
-FROM rust:1.85-slim AS builder
+FROM rust:1.94-slim AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends musl-tools pkg-config \
     && rm -rf /var/lib/apt/lists/*
 RUN rustup target add x86_64-unknown-linux-musl wasm32-wasip2
