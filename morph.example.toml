@@ -35,3 +35,9 @@ json = true
 [inspector]
 enabled = false
 max_events = 50
+
+[retry]
+enabled = true
+max_retries = 2
+initial_backoff_ms = 500
+max_backoff_ms = 8000

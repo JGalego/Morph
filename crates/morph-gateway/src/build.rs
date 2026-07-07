@@ -43,12 +43,14 @@ pub fn build_app_state(
                 provider_cfg.base_url.clone(),
                 api_key,
                 provider_cfg.passthrough_auth,
+                config.retry.clone(),
             )),
             "anthropic" => Arc::new(AnthropicProvider::new(
                 name.clone(),
                 provider_cfg.base_url.clone(),
                 api_key,
                 provider_cfg.passthrough_auth,
+                config.retry.clone(),
             )),
             other => {
                 anyhow::bail!(

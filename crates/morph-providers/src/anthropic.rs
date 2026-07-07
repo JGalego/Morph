@@ -14,6 +14,7 @@ use eventsource_stream::{Event as SseEvent, EventStreamError, Eventsource};
 use futures::Stream;
 use serde_json::{json, Map, Value};
 
+use morph_config::RetryConfig;
 use morph_core::capabilities::Capabilities;
 use morph_core::error::GatewayError;
 use morph_core::message::{ContentBlock, ImageBlock, ImageSource, Role, ToolChoice};
@@ -50,6 +51,7 @@ pub struct AnthropicProvider {
     base_url: String,
     api_key: Option<String>,
     passthrough_auth: bool,
+    retry: RetryConfig,
     client: reqwest::Client,
 }
 
@@ -59,12 +61,14 @@ impl AnthropicProvider {
         base_url: impl Into<String>,
         api_key: Option<String>,
         passthrough_auth: bool,
+        retry: RetryConfig,
     ) -> Self {
         AnthropicProvider {
             name: name.into(),
             base_url: base_url.into(),
             api_key,
             passthrough_auth,
+            retry,
             client: reqwest::Client::new(),
         }
     }
@@ -121,7 +125,7 @@ impl ProviderAdapter for AnthropicProvider {
             }
         }
 
-        let response = send_request(builder).await?;
+        let response = send_request(builder, &self.retry).await?;
         let sse: Pin<
             Box<dyn Stream<Item = Result<SseEvent, EventStreamError<reqwest::Error>>> + Send>,
         > = Box::pin(response.bytes_stream().eventsource());
@@ -660,6 +664,7 @@ mod tests {
             mock_server.uri(),
             Some("sk-ant-test".to_string()),
             false,
+            RetryConfig::default(),
         );
         let req = base_request(
             "claude-3-5-sonnet",
@@ -743,6 +748,7 @@ mod tests {
             mock_server.uri(),
             Some("sk-ant-test".to_string()),
             false,
+            RetryConfig::default(),
         );
         let req = base_request("claude-3-5-sonnet", vec![Message::user("hi")]);
         let err = provider.send(req, &[]).await.err().expect("should fail");
@@ -785,6 +791,7 @@ mod tests {
             mock_server.uri(),
             Some("configured-key-must-not-be-sent".to_string()),
             true,
+            RetryConfig::default(),
         );
         let req = base_request("claude-3-5-sonnet", vec![Message::user("hi")]);
         let incoming_headers = vec![

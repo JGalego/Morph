@@ -61,6 +61,9 @@ pub struct Config {
 
     #[serde(default)]
     pub inspector: InspectorConfig,
+
+    #[serde(default)]
+    pub retry: RetryConfig,
 }
 
 fn default_mode() -> String {
@@ -105,6 +108,7 @@ impl Default for Config {
             plugins: PluginsConfig::default(),
             logging: LoggingConfig::default(),
             inspector: InspectorConfig::default(),
+            retry: RetryConfig::default(),
         }
     }
 }
@@ -207,6 +211,18 @@ pub struct LoggingConfig {
     /// Never log prompt/response content by default — see project security goals.
     pub log_prompts: bool,
     pub json: bool,
+    /// Overrides the default `tracing` verbosity — one or more comma-separated
+    /// `target=level` directives, the same syntax `RUST_LOG` accepts (e.g.
+    /// `"morph_gateway::pipeline=off,morph=warn"` to silence one noisy
+    /// module while keeping everything else at `warn`). `None` keeps the
+    /// built-in default (`morph=info`, or `morph=warn` under
+    /// `morph -- <command>`). The `RUST_LOG` env var, when set, still wins
+    /// over this — this is a persisted alternative to setting it by hand
+    /// every time, not a replacement for it. Read once at startup; changing
+    /// it needs a restart, same as any other provider/logging-adjacent
+    /// setting fixed for the process's lifetime.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
 }
 
 impl Default for LoggingConfig {
@@ -214,6 +230,7 @@ impl Default for LoggingConfig {
         LoggingConfig {
             log_prompts: false,
             json: true,
+            level: None,
         }
     }
 }
@@ -236,6 +253,33 @@ impl Default for InspectorConfig {
         InspectorConfig {
             enabled: false,
             max_events: 50,
+        }
+    }
+}
+
+/// Retry behavior for upstream provider calls. Only transient failures are
+/// retried — a rate limit (HTTP 429), a 5xx, or a network timeout — never
+/// 4xx client errors like a bad request or an invalid API key, since retrying
+/// those would just reproduce the same failure.
+///
+/// Backoff is exponential: `initial_backoff_ms * 2^(attempt - 1)`, capped at
+/// `max_backoff_ms`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RetryConfig {
+    pub enabled: bool,
+    pub max_retries: u32,
+    pub initial_backoff_ms: u64,
+    pub max_backoff_ms: u64,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        RetryConfig {
+            enabled: true,
+            max_retries: 2,
+            initial_backoff_ms: 500,
+            max_backoff_ms: 8_000,
         }
     }
 }

@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/JGalego/Morph/actions/workflows/ci.yml"><img src="https://github.com/JGalego/Morph/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/JGalego/Morph/blob/main/LICENSE"><img src="https://img.shields.io/github/license/JGalego/Morph" alt="License"></a>
+  <a href="https://github.com/JGalego/Morph/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License"></a>
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-1.94%2B-orange" alt="Rust 1.94+"></a>
   <a href="https://github.com/JGalego/Morph/stargazers"><img src="https://img.shields.io/github/stars/JGalego/Morph" alt="Stars"></a>
 </p>

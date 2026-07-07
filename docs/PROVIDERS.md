@@ -83,6 +83,26 @@ rate-limits by credential — whatever auth reaches Morph reaches the
 provider unchanged. Use `[auth]`/`[rate_limit]` in `morph.toml` if you need
 Morph itself to gate access.
 
+## Retrying transient upstream failures
+
+Both built-in providers send every outbound request through
+`crates/morph-providers/src/util.rs::send_request`, which retries transient
+failures — HTTP 429 (rate limited), any 5xx, or a network timeout — with
+exponential backoff, controlled by `[retry]` in `morph.toml`:
+
+```toml
+[retry]
+enabled = true
+max_retries = 2
+initial_backoff_ms = 500
+max_backoff_ms = 8000
+```
+
+Backoff is `initial_backoff_ms * 2^(attempt - 1)`, capped at
+`max_backoff_ms`. Other 4xx errors (invalid request, bad API key, ...) are
+never retried, since they fail identically every time. Set `enabled = false`
+to have every upstream error surface to the client immediately, unretried.
+
 ## Adding a new provider
 
 1. Implement `ProviderAdapter` in a new module (or a new crate, if it has

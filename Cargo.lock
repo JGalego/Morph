@@ -2204,6 +2204,7 @@ dependencies = [
  "bytes",
  "eventsource-stream",
  "futures",
+ "morph-config",
  "morph-core",
  "reqwest",
  "serde",

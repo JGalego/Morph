@@ -18,6 +18,7 @@ use futures::Stream;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
+use morph_config::RetryConfig;
 use morph_core::capabilities::Capabilities;
 use morph_core::error::GatewayError;
 use morph_core::message::{ContentBlock, ImageBlock, ImageSource, Message, Role, ToolChoice};
@@ -45,6 +46,7 @@ pub struct OpenAiProvider {
     base_url: String,
     api_key: Option<String>,
     passthrough_auth: bool,
+    retry: RetryConfig,
     client: reqwest::Client,
 }
 
@@ -54,12 +56,14 @@ impl OpenAiProvider {
         base_url: impl Into<String>,
         api_key: Option<String>,
         passthrough_auth: bool,
+        retry: RetryConfig,
     ) -> Self {
         OpenAiProvider {
             name: name.into(),
             base_url: base_url.into(),
             api_key,
             passthrough_auth,
+            retry,
             client: reqwest::Client::new(),
         }
     }
@@ -104,7 +108,7 @@ impl ProviderAdapter for OpenAiProvider {
             builder = builder.bearer_auth(key);
         }
 
-        let response = send_request(builder).await?;
+        let response = send_request(builder, &self.retry).await?;
         let sse: Pin<
             Box<dyn Stream<Item = Result<SseEvent, EventStreamError<reqwest::Error>>> + Send>,
         > = Box::pin(response.bytes_stream().eventsource());
@@ -664,6 +668,7 @@ mod tests {
             mock_server.uri(),
             Some("sk-test".to_string()),
             false,
+            RetryConfig::default(),
         );
         let req = base_request("gpt-4o-mini", vec![Message::user("what's the weather?")]);
         let mut stream = provider.send(req, &[]).await.expect("send should succeed");
@@ -734,6 +739,7 @@ mod tests {
             mock_server.uri(),
             Some("bad-key".to_string()),
             false,
+            RetryConfig::default(),
         );
         let req = base_request("gpt-4o-mini", vec![Message::user("hi")]);
         let err = provider.send(req, &[]).await.err().expect("should fail");

@@ -83,24 +83,60 @@ enum Commands {
     Benchmark,
 }
 
+/// Parses a comma-separated `[logging].level` value into individual
+/// `tracing_subscriber` directives — the same syntax `RUST_LOG` accepts.
+/// Returns the first parse error's source text (for the warning printed at
+/// the call site) rather than a full error type, since this is only ever
+/// consumed as "did it work, and if not, what did the user write".
+fn parse_directives(
+    spec: &str,
+) -> Result<Vec<tracing_subscriber::filter::Directive>, String> {
+    spec.split(',')
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .map(|d| d.parse().map_err(|_| d.to_string()))
+        .collect()
+}
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
 
     // Under `morph -- <command>`, Morph's own request/startup logging would
     // otherwise interleave with the wrapped tool's own terminal output —
-    // default to quiet there (still overridable via RUST_LOG).
-    let default_directive = if cli.exec.is_empty() {
+    // default to quiet there (still overridable via `[logging].level` in
+    // config, or RUST_LOG). The config file may not exist yet on a first
+    // run (e.g. before `morph init`/the first `morph run`), so a missing or
+    // unreadable one just falls through to the built-in default below,
+    // exactly like today.
+    let fallback_directive = if cli.exec.is_empty() {
         "morph=info"
     } else {
         "morph=warn"
     };
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(default_directive.parse().unwrap()),
-        )
-        .init();
+    let configured_level = morph_config::load(&cli.config)
+        .ok()
+        .and_then(|c| c.logging.level);
+
+    let mut filter = tracing_subscriber::EnvFilter::from_default_env();
+    match configured_level.as_deref().map(parse_directives) {
+        Some(Ok(directives)) => {
+            for directive in directives {
+                filter = filter.add_directive(directive);
+            }
+        }
+        Some(Err(bad)) => {
+            eprintln!(
+                "warning: invalid [logging].level directive {bad:?} in {}, using the default instead",
+                cli.config.display()
+            );
+            filter = filter.add_directive(fallback_directive.parse().unwrap());
+        }
+        None => {
+            filter = filter.add_directive(fallback_directive.parse().unwrap());
+        }
+    }
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     if !cli.exec.is_empty() {
         if let Err(e) = commands::exec::execute(&cli.config, cli.exec, cli.extra_env).await {

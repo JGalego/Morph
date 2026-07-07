@@ -11,6 +11,6 @@ pub use error::{ConfigError, Result};
 pub use load::{load, parse, write_default};
 pub use schema::{
     AuthConfig, Config, InspectorConfig, LoggingConfig, PluginsConfig, ProviderConfig,
-    RateLimitConfig, RenderConfig,
+    RateLimitConfig, RenderConfig, RetryConfig,
 };
 pub use watch::ConfigWatcher;
