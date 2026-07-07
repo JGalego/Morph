@@ -107,7 +107,7 @@ morph test            local pipeline smoke test
 morph benchmark       time each renderer
 ```
 
-`morph -- <command>` sets every common base-URL env var at once (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `OPENAI_API_BASE`, `OLLAMA_HOST`); `--env NAME=VALUE` covers anything nonstandard.
+`morph -- <command>` sets every common base-URL env var at once (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `OPENAI_API_BASE`, `OLLAMA_HOST`); `--env NAME=VALUE` covers a one-off nonstandard value, and `[exec] extra_base_url_env_vars` in `morph.toml` covers a var name you want pointed at Morph every time.
 
 ## Build & run
 

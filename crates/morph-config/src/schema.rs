@@ -64,6 +64,9 @@ pub struct Config {
 
     #[serde(default)]
     pub retry: RetryConfig,
+
+    #[serde(default)]
+    pub exec: ExecConfig,
 }
 
 fn default_mode() -> String {
@@ -109,6 +112,7 @@ impl Default for Config {
             logging: LoggingConfig::default(),
             inspector: InspectorConfig::default(),
             retry: RetryConfig::default(),
+            exec: ExecConfig::default(),
         }
     }
 }
@@ -282,4 +286,22 @@ impl Default for RetryConfig {
             max_backoff_ms: 8_000,
         }
     }
+}
+
+/// Extends `morph -- <command>`'s built-in env var conventions (Anthropic,
+/// OpenAI, Ollama — see `morph-cli`'s `exec` command) for a client with its
+/// own base-URL/credential env vars, without a code change. Unlike `--env
+/// NAME=VALUE` (a literal, one-off value passed at invocation time), names
+/// listed here are set to Morph's own computed base URL / cleared every time
+/// `morph -- <command>` runs, the same as the built-in ones.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExecConfig {
+    /// Extra env var names to set to Morph's own base URL.
+    pub extra_base_url_env_vars: Vec<String>,
+    /// Extra credential env var names to clear before launching the wrapped
+    /// command, so a stray one left over from another shell session can't
+    /// silently bypass Morph — see `[providers.*].passthrough_auth` in
+    /// docs/PROVIDERS.md.
+    pub extra_clear_env_vars: Vec<String>,
 }

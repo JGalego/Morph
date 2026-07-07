@@ -41,3 +41,9 @@ enabled = true
 max_retries = 2
 initial_backoff_ms = 500
 max_backoff_ms = 8000
+
+# Only needed for `morph -- <command>` against a client whose base-URL/
+# credential env vars aren't in the built-in set (Anthropic, OpenAI, Ollama).
+[exec]
+extra_base_url_env_vars = []
+extra_clear_env_vars = []
