@@ -88,9 +88,7 @@ enum Commands {
 /// Returns the first parse error's source text (for the warning printed at
 /// the call site) rather than a full error type, since this is only ever
 /// consumed as "did it work, and if not, what did the user write".
-fn parse_directives(
-    spec: &str,
-) -> Result<Vec<tracing_subscriber::filter::Directive>, String> {
+fn parse_directives(spec: &str) -> Result<Vec<tracing_subscriber::filter::Directive>, String> {
     spec.split(',')
         .map(str::trim)
         .filter(|d| !d.is_empty())

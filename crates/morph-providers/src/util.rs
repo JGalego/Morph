@@ -104,7 +104,9 @@ pub(crate) async fn send_request(
 fn is_retryable(err: &GatewayError) -> bool {
     match err {
         GatewayError::Timeout(_) => true,
-        GatewayError::Upstream { status: Some(429), .. } => true,
+        GatewayError::Upstream {
+            status: Some(429), ..
+        } => true,
         GatewayError::Upstream {
             status: Some(status),
             ..
